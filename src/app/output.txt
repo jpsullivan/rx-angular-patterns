@@ -1,0 +1,906 @@
+# ./app.component.html
+
+
+
+
+# ./app.routes.ts
+
+import { Routes } from '@angular/router';
+
+export const routes: Routes = [];
+
+
+
+# ./utils/track-by/track-by.ts
+
+type TrackByResult = string | number | null | undefined;
+
+/**
+ * Function to track elements via their id.
+ * Used in anglar templates, i.e. together with the `*ngFor` directive.
+ * @param _
+ * @param element
+ * @returns
+ */
+export function trackById<ElementType extends { id?: number | string }>(
+  _: number,
+  element: ElementType
+): TrackByResult {
+  return element ? element.id : null;
+}
+
+export function trackByIndex(index: number, _element: any): TrackByResult {
+  return index;
+}
+
+
+
+# ./utils/rx/state/with-loading-emission.ts
+
+import { endWith, Observable, startWith } from 'rxjs';
+import { DefaultLoadingProp, LoadingState } from './loading-state.interface';
+
+const defaultLoadingProp: DefaultLoadingProp = 'loading';
+
+export function withLoadingEmission<T, K extends string = DefaultLoadingProp>(
+  property?: K
+) {
+  const _property =
+    property === undefined
+      ? (defaultLoadingProp as DefaultLoadingProp)
+      : property;
+
+  const start = { [_property]: true } as T & LoadingState<K>;
+  const end = { [_property]: false } as T & LoadingState<K>;
+
+  return (o$: Observable<T>) =>
+    (o$ as Observable<T & LoadingState<K>>).pipe(
+      startWith(start),
+      endWith(end)
+    );
+}
+
+
+
+# ./utils/rx/state/types.ts
+
+import { LoadingState } from './loading-state.interface';
+
+export type WithContext<T> = LoadingState & {
+  value: T;
+  error?: unknown;
+  complete?: unknown;
+};
+
+/**
+ * Represents a collection of domain entities where both the collection itself and each individual entity
+ * maintains contextual information about its state (loading, errors, etc).
+ *
+ * This type combines:
+ * 1. A dictionary/record of entities keyed by their ID
+ * 2. Context tracking for each individual entity (loading, error states)
+ * 3. Context tracking for operations on the entire collection
+ *
+ * @example
+ * // Collection loading state
+ * { loading: true, value: {}, error: null }
+ *
+ * // Collection with entities
+ * {
+ *   loading: false,
+ *   value: {
+ *     "123": { loading: false, value: { id: "123", name: "Todo" }, error: null },
+ *     "456": { loading: true, value: null, error: null }
+ *   },
+ *   error: null
+ * }
+ */
+export type EntityContextCollection<T> = WithContext<
+  Record<string, WithContext<T>>
+>;
+
+
+
+# ./utils/rx/state/entity-context.utils.ts
+
+import { patch } from '@rx-angular/cdk/transformations';
+import { EntityContextCollection, WithContext } from './types';
+
+/**
+ * Creates an empty context state with default values.
+ * Used to ensure we always have a valid state structure even before any data is loaded.
+ *
+ * @returns A WithContext object with an empty value and no loading state
+ */
+export const createInitialContext = <T>(): WithContext<T> => ({
+  value: {} as T,
+  loading: false,
+});
+
+/**
+ * Creates a properly structured response object with context information.
+ * Handles both single-entity and collection responses.
+ *
+ * @param value - The entity or entities to wrap with context
+ * @param id - Optional entity ID. If provided, wraps a single entity. If omitted, wraps the entire collection
+ * @returns A context-wrapped response object
+ *
+ * @example
+ * // Single entity
+ * withContextResponse(todo, "123")
+ * // Collection
+ * withContextResponse(todos)
+ */
+export const withContextResponse = <T>(value: T, id?: string) => ({
+  value: id ? { [id]: { value, loading: false, error: null } } : value,
+  loading: false,
+  error: null,
+});
+
+/**
+ * Creates a properly structured error state with context information.
+ * Handles both single-entity and collection-level errors.
+ *
+ * @param error - The error to wrap with context
+ * @param id - Optional entity ID. If provided, associates error with specific entity
+ * @returns A context-wrapped error object
+ *
+ * @example
+ * // Single entity error
+ * withContextError(error, "123")
+ * // Collection error
+ * withContextError(error)
+ */
+export const withContextError = (error: any, id?: string) => ({
+  value: id
+    ? { [id]: { value: null, loading: false, error: error.message } }
+    : {},
+  loading: false,
+  error: error.message || 'An error occurred',
+});
+
+/**
+ * Helper to merge changes into an EntityContextCollection while preserving its structure.
+ * Handles both the top-level context state and the nested entity dictionary.
+ *
+ * @param oldState - The existing entity collection state
+ * @param newPartial - The new partial state to merge
+ * @returns The merged entity collection maintaining full context structure
+ *
+ * @example
+ * connect(
+ *   'todos',
+ *   todoActions$.pipe(...),
+ *   (state, newPartial) => ({
+ *     ...state,
+ *     todos: mergeEntityContext(state.todos, newPartial)
+ *   })
+ * );
+ */
+export function mergeEntityContext<T>(
+  oldState: EntityContextCollection<T>,
+  newPartial: Partial<WithContext<any>>
+): EntityContextCollection<T> {
+  const resultState = patch(oldState || createInitialContext(), newPartial);
+  resultState.value = patch(oldState?.value || {}, resultState?.value || {});
+  return resultState;
+}
+
+/**
+ * Helper function to merge state changes into EntityContextCollection while preserving
+ * the required WithContext structure. This is specifically designed for use with RxState's connect()
+ * operator when updating collections of entities that maintain loading/error states.
+ *
+ * @example
+ * connect(
+ *   'todos',
+ *   todoActions$.pipe(
+ *     map(todos => withContextResponse(todos))
+ *   ),
+ *   (state, newPartial) => mergeEntityContextState(state, newPartial, 'todos')
+ * );
+ */
+export function mergeEntityContextState<
+  T extends { [K in keyof T]: EntityContextCollection<any> },
+  K extends keyof T
+>(state: T, newPartial: Partial<WithContext<any>>, key: K): T {
+  return {
+    ...state,
+    value: mergeEntityContext(state[key], newPartial).value,
+    loading: newPartial.loading,
+    error: newPartial.error,
+  };
+}
+
+
+
+# ./utils/rx/state/loading-state.interface.ts
+
+export type DefaultLoadingProp = string & 'loading';
+export type LoadingState<
+  K extends string | DefaultLoadingProp = DefaultLoadingProp,
+> = {
+  [k in K]?: boolean;
+};
+
+
+
+# ./utils/rx/rx.component.ts
+
+import { trackById, trackByIndex } from '../track-by/track-by';
+import { RxDirective } from './rx.directive';
+
+export abstract class RxComponent<
+  T extends object = {}
+> extends RxDirective<T> {
+  readonly trackById = trackById;
+  readonly trackByIndex = trackByIndex;
+}
+
+
+
+# ./utils/rx/rx.directive.ts
+
+import { RxState } from '@rx-angular/state';
+import { isObservable, Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+export abstract class RxDirective<T extends object = never> extends RxState<T> {
+  readonly state$ = this.select();
+
+  protected setState(state: Partial<T> | Observable<Partial<T>>) {
+    if (isObservable(state)) {
+      this.connect(state);
+    } else {
+      this.set(state);
+    }
+  }
+
+  protected setProperty(
+    key: keyof T,
+    value: T[keyof T] | Observable<T[keyof T]>
+  ) {
+    if (isObservable(value)) {
+      this.connect(value.pipe(map((emission) => ({ [key]: emission } as any))));
+    } else {
+      this.set({ [key]: value } as any);
+    }
+  }
+}
+
+
+
+# ./utils/rx/actions-with-tracking/rx-actions-with-tracking.ts
+
+import {
+  assertInInjectionContext,
+  DestroyRef,
+  ErrorHandler,
+  inject,
+} from '@angular/core';
+import { actionProxyHandler } from './proxy';
+import {
+  Actions,
+  ActionTransforms,
+  EffectMap,
+  RxActions,
+  SubjectMap,
+} from './types';
+
+/**
+ * Manage events in components and services in a single place
+ *
+ * @example
+ *
+ * interface UI {
+ *  search: string,
+ *  submit: void
+ * };
+ *
+ * import { rxActions } from '@rx-angular/state/actions';
+ *
+ * @Component({...})
+ * export class Component {
+ *   ui = rxActionsWithTracking<{ name: string }>(({transforms}) => transforms({name: v => v}));
+ *
+ *   name$ = this.ui.name$; // Observable<string> - listens to name changes
+ *   emitName = this.ui.name; // (name: string) => void - emits name change
+ *   sub = this.ui.onName(o$ => o$.pipe(), console.log) // () => void - stops side effect
+ *
+ *   onInit() {
+ *     const name$ = this.ui.name$; // Observable<string> - listens to name changes
+ *     const emitName = this.ui.name; // (name: string) => void - emits name change
+ *     const stop = this.ui.onName(o$ => o$.pipe(), console.log) // () => void - stops side effect
+ *     stop();
+ *   }
+ *
+ * }
+ *
+ */
+export function rxActionsWithTracking<
+  T extends Partial<Actions>,
+  U extends ActionTransforms<T> = object,
+>(setupFn?: (cfg: { transforms: (t: U) => void }) => void): RxActions<T, U> {
+  // Assert rxAction usage
+  assertInInjectionContext(rxActionsWithTracking);
+
+  const subjectMap: SubjectMap<T> = {} as SubjectMap<T>;
+  const effectMap: EffectMap<T> = {} as EffectMap<T>;
+  const errorHandler = inject(ErrorHandler);
+  let transformsMap = {} as U;
+
+  /**
+   * @internal
+   * Internally used to clean up potential subscriptions to the subjects. (For Actions it is most probably a rare case but still important to care about)
+   */
+  inject(DestroyRef).onDestroy(() => {
+    Object.values(subjectMap).forEach((subject: any) => subject.complete());
+  });
+
+  // run setup function if given
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  setupFn &&
+    setupFn({
+      transforms: (t: U) => (transformsMap = t),
+    });
+
+  // create actions
+  function signals(): void {}
+  return new Proxy(
+    signals as any as RxActions<T, U>,
+    actionProxyHandler({
+      subjectMap,
+      transformsMap,
+      effectMap,
+      errorHandler,
+    }),
+  ) as any as RxActions<T, U>;
+}
+
+
+
+# ./utils/rx/actions-with-tracking/types.ts
+
+import { Observable, OperatorFunction, Subject, Subscription } from 'rxjs';
+
+export type ValuesOf<O> = O[keyof O];
+// type Keys = KeysOf<{ a: string, b: number }>; // "a" | "b"
+export type KeysOf<O> = keyof O;
+
+// class vs instance
+type InstanceOrType<T> = T extends abstract new (...args: any) => infer R
+  ? R
+  : T;
+
+// We infer all arguments instead of just the first one as we are more flexible for later changes
+type InferArguments<T> = T extends (...args: infer R) => any ? R : never;
+
+// It helps to infer the type of an objects key
+// We have to use it because using just U[K] directly would @TODO
+type Select<U, K> = K extends keyof U ? U[K] : never;
+
+type ExtractString<T extends object> = Extract<keyof T, string>;
+
+// Helper to get either the params of the transform function, or if the function is not present a fallback type
+type FunctionParamsOrValueType<U, K, F> =
+  InferArguments<Select<U, K>> extends never
+    ? [F]
+    : InferArguments<Select<U, K>>;
+
+export type Actions = object;
+
+export type SubjectMap<T> = { [K in keyof T]: Subject<T[K]> };
+export type EffectMap<T> = { [K in keyof T]: Subscription };
+
+export type ActionTransforms<T extends object> = Partial<{
+  [K in keyof T]: (...args: any[]) => T[K];
+}>;
+
+export type ActionDispatchConfig = {
+  silent?: boolean; // Don't trigger loading state
+  // Could add more config options here like:
+  // debounce?: number
+  // throttle?: number
+};
+
+// export type ActionDispatchFn<O extends unknown[]> = (
+//   ...value: InstanceOrType<O>
+// ) => void;
+export type ActionDispatchFn<O extends unknown[]> = (
+  ...args: [...values: InstanceOrType<O>, config?: ActionDispatchConfig]
+) => void;
+
+export type ActionDispatchers<T extends Actions, U extends object> = {
+  [K in keyof T]: ActionDispatchFn<
+    FunctionParamsOrValueType<U, K, Select<T, K>>
+  >;
+};
+
+export type ActionObservables<T extends Actions> = {
+  [K in ExtractString<T> as `${K}$`]: Observable<InstanceOrType<T[K]>>;
+};
+
+export type ActionEffects<T extends Actions, O = T> = {
+  [K in ExtractString<T> as `on${Capitalize<string & K>}`]: <R>(
+    fn: OperatorFunction<T[K], R>,
+    sideEffectFn?: (value: R) => void,
+  ) => () => void;
+};
+
+export type RxActions<
+  T extends Actions,
+  U extends object = T,
+> = ActionDispatchers<T, U> &
+  ActionObservables<T> &
+  ActionEffects<T> &
+  ((slice: Partial<T>) => void) & {
+    $: (props: (keyof T)[]) => Observable<ValuesOf<T>>;
+  };
+
+
+
+# ./utils/rx/actions-with-tracking/proxy.ts
+
+import { ErrorHandler } from '@angular/core';
+import {
+  BehaviorSubject,
+  EMPTY,
+  from,
+  merge,
+  OperatorFunction,
+  Subject,
+  switchMap,
+  tap,
+} from 'rxjs';
+import {
+  ActionDispatchConfig,
+  EffectMap,
+  KeysOf,
+  RxActions,
+  SubjectMap,
+  ValuesOf,
+} from './types';
+
+/**
+ * @internal
+ * Internal helper to create the proxy object
+ * It lives as standalone function because we don't need to carrie it in memory for every ActionHandler instance
+ * @param subjects
+ * @param transforms
+ */
+export function actionProxyHandler<T extends object, U extends object>({
+  subjectMap,
+  transformsMap,
+  effectMap,
+  errorHandler = null,
+}: {
+  subjectMap: SubjectMap<T>;
+  transformsMap?: U;
+  effectMap: EffectMap<T>;
+  errorHandler: ErrorHandler | null;
+}): ProxyHandler<RxActions<T, U>> {
+  type KeysOfT = KeysOf<T>;
+  type ValuesOfT = ValuesOf<T>;
+
+  // Track states for each action
+  const stateMap: Record<
+    string,
+    {
+      loading$: BehaviorSubject<boolean>;
+      complete$: Subject<boolean>;
+      error$: Subject<any>;
+    }
+  > = {};
+
+  function getOrCreateState(prop: KeysOfT) {
+    if (!stateMap[prop as string]) {
+      stateMap[prop as string] = {
+        loading$: new BehaviorSubject(false),
+        complete$: new Subject(),
+        error$: new Subject(),
+      };
+    }
+    return stateMap[prop as string];
+  }
+
+  function getEventEmitter(prop: KeysOfT): Subject<ValuesOfT> {
+    if (!subjectMap[prop]) {
+      const subject = new Subject<ValuesOfT>();
+      subjectMap[prop] = subject;
+
+      // Instead of subscribing directly, we use the subject as a trigger
+      // The actual completion/error states will be derived from the action's result
+      const state = getOrCreateState(prop);
+
+      subject
+        .pipe(
+          // Start loading when action starts
+          tap(() => state.loading$.next(true)),
+          // Handle the action execution
+          switchMap((value) => {
+            try {
+              // Transform the value if needed
+              const transformedValue =
+                transformsMap && (transformsMap as any)[prop]
+                  ? (transformsMap as any)[prop](value)
+                  : value;
+
+              // Return as observable to handle both sync and async results
+              return from(Promise.resolve(transformedValue)).pipe(
+                // Complete signals success
+                tap({
+                  next: () => {
+                    state.loading$.next(false);
+                    state.complete$.next(true);
+                  },
+                  error: (err) => {
+                    state.loading$.next(false);
+                    state.error$.next(err);
+                    if (errorHandler) {
+                      errorHandler.handleError(err);
+                    }
+                  },
+                })
+              );
+            } catch (err) {
+              state.loading$.next(false);
+              state.error$.next(err);
+              if (errorHandler) {
+                errorHandler.handleError(err);
+              }
+              return EMPTY;
+            }
+          })
+        )
+        .subscribe();
+    }
+    return subjectMap[prop];
+  }
+
+  function dispatch(value: ValuesOfT, prop: KeysOfT) {
+    subjectMap[prop] = subjectMap[prop] || new Subject<ValuesOfT>();
+    try {
+      const val =
+        transformsMap && (transformsMap as any)[prop]
+          ? (transformsMap as any)[prop](value)
+          : value;
+      subjectMap[prop].next(val);
+    } catch (err) {
+      errorHandler?.handleError(err);
+    }
+  }
+  return {
+    // shorthand setter for multiple EventEmitter e.g. actions({propA: 1, propB: 2})
+    apply(_: RxActions<T, U>, __: any, props: [T]): any {
+      props.forEach((slice) =>
+        Object.entries(slice).forEach(([k, v]) =>
+          dispatch(v as any, k as any as KeysOfT)
+        )
+      );
+    },
+    get(_, property: string) {
+      const prop = property as KeysOfT;
+
+      // Handle loading$ observables
+      if (prop.toString().endsWith('Loading$')) {
+        const actionName = prop.toString().replace(/Loading\$$/, '') as KeysOfT;
+        return getOrCreateState(actionName).loading$.asObservable();
+      }
+
+      // Handle complete$ observables
+      if (prop.toString().endsWith('Complete$')) {
+        const actionName = prop
+          .toString()
+          .replace(/Complete\$$/, '') as KeysOfT;
+        return getOrCreateState(actionName).complete$.asObservable();
+      }
+
+      // Handle error$ observables
+      if (prop.toString().endsWith('Error$')) {
+        const actionName = prop.toString().replace(/Error\$$/, '') as KeysOfT;
+        return getOrCreateState(actionName).error$.asObservable();
+      }
+
+      // the user wants to get multiple or one single EventEmitter as observable `eventEmitter.prop$`
+      if (prop.toString().split('').pop() === '$') {
+        // the user wants to get multiple EventEmitter as observable `eventEmitter.$(['prop1', 'prop2'])`
+        if (prop.toString().length === 1) {
+          return (props: KeysOfT[]) =>
+            merge(
+              ...props.map((k) => {
+                return getEventEmitter(k);
+              })
+            );
+        }
+        // the user wants to get a single EventEmitter as observable `eventEmitter.prop$`
+        const propName = prop.toString().slice(0, -1) as KeysOfT;
+        return getEventEmitter(propName);
+      }
+
+      // the user wants to get a single EventEmitter and trigger a side effect on event emission
+      if (prop.toString().startsWith('on')) {
+        // we need to first remove the 'on' from the the prop name
+        const slicedPropName = prop.toString().slice(2);
+        // now convert the slicedPropName to camelcase
+        const propName = (slicedPropName.charAt(0).toLowerCase() +
+          slicedPropName.slice(1)) as KeysOfT;
+        return (
+          behaviour: OperatorFunction<T[KeysOfT], T[KeysOfT]>,
+          sf: (v: T[KeysOfT]) => void
+        ) => {
+          const sub = getEventEmitter(propName).pipe(behaviour).subscribe(sf);
+          effectMap[propName] = sub;
+          return () => sub.unsubscribe();
+        };
+      }
+
+      // the user wants to get a dispatcher function to imperatively dispatch the EventEmitter
+      return (...args: any[]) => {
+        // Extract config if provided as last argument
+        const config =
+          typeof args[args.length - 1] === 'object'
+            ? (args.pop() as ActionDispatchConfig)
+            : {};
+
+        const state = getOrCreateState(prop);
+
+        // Only update loading state if not silent
+        if (!config.silent) {
+          state.loading$.next(true);
+        }
+        state.complete$.next(false);
+        state.error$.next(null);
+
+        try {
+          // Pass remaining args to dispatch
+          dispatch(args[0], prop);
+        } catch (err) {
+          if (!config.silent) {
+            state.loading$.next(false);
+          }
+          state.error$.next(err);
+          if (errorHandler) {
+            errorHandler.handleError(err);
+          }
+        }
+      };
+    },
+    set() {
+      throw new Error('No setters available. To emit call the property name.');
+    },
+  };
+}
+
+
+
+# ./utils/rx/actions-with-tracking/transforms.ts
+
+/**
+ * @description
+ * This transform is a side effecting operation applying `preventDefault` to a passed Event
+ * @param e
+ */
+export function preventDefault(e: Event): Event {
+  e.preventDefault();
+  return e;
+}
+
+/**
+ * @description
+ * This transform is a side effecting operation applying `stopPropagation` to a passed Event
+ * @param e
+ */
+export function stopPropagation(e: Event): Event {
+  e.stopPropagation();
+  return e;
+}
+
+/**
+ * @description
+ * This transform is a side effecting operation applying `preventDefault` and `stopPropagation` to a passed Event
+ * @param e
+ */
+export function preventDefaultStopPropagation(e: Event): Event {
+  e.stopPropagation();
+  e.preventDefault();
+  return e;
+}
+
+/**
+ * @description
+ * This transform is helps to pluck values from DOM `Event` or forward the value directly.
+ * @param e
+ */
+export function eventValue<T = string>(e: Event | T): T {
+  // Consider https://stackoverflow.com/questions/1458894/how-to-determine-if-javascript-object-is-an-event
+  if ((e as unknown as { target: { value: T } })?.target) {
+    return (e as unknown as { target: { value: T } })?.target?.value;
+  }
+  return e as T;
+}
+
+
+
+# ./models/todo.ts
+
+export interface Todo {
+  id: string;
+  name: string;
+  done: boolean;
+  createdAt: string;
+}
+
+
+
+# ./state/todos.state.ts
+
+import { inject, Injectable } from '@angular/core';
+import { rxState } from '@rx-angular/state';
+import { rxActions } from '@rx-angular/state/actions';
+import { catchError, exhaustMap, map, of } from 'rxjs';
+import { TodosService } from '../services/todos.service';
+import {
+  mergeEntityContext,
+  mergeEntityContextState,
+  withContextError,
+  withContextResponse,
+} from '../utils/rx/state/entity-context.utils';
+import { EntityContextCollection } from '../utils/rx/state/types';
+import { withLoadingEmission } from '../utils/rx/state/with-loading-emission';
+
+export type Todo = {
+  id: string;
+  name: string;
+  done: boolean;
+  createdAt: string;
+};
+
+export interface TodosStateModel {
+  todos: EntityContextCollection<Todo>;
+}
+
+interface Actions {
+  fetchTodos: void;
+  fetchTodo: string;
+  updateTodo: Partial<Todo>;
+}
+
+@Injectable({
+  providedIn: 'root',
+})
+export class GlobalTodosState {
+  private readonly todoService = inject(TodosService);
+  private readonly actions = rxActions<Actions>();
+  private readonly state = rxState<TodosStateModel>(({ connect }) => {
+    // Fetch all todos
+    connect(
+      'todos',
+      this.actions.fetchTodos$.pipe(
+        exhaustMap(() =>
+          this.todoService.getTodos().pipe(
+            withLoadingEmission(),
+            map((todos) => withContextResponse(todos)),
+            catchError((error) => of(withContextError(error)))
+          )
+        )
+      ),
+      // (state, newPartial) => mergeEntityContextState(state, newPartial, 'todos')
+      (state, newPartial) => {
+        return {
+          ...state,
+          value: mergeEntityContext(state.todos, newPartial).value,
+          loading: newPartial.loading,
+          error: newPartial.error,
+        };
+      }
+    );
+
+    // Fetch single todo
+    connect(
+      'todos',
+      this.actions.fetchTodo$.pipe(
+        exhaustMap((todoId) =>
+          this.todoService.getTodo(todoId).pipe(
+            withLoadingEmission(),
+            map((todo) => withContextResponse(todo, todoId)),
+            catchError((error) => of(withContextError(error, todoId)))
+          )
+        )
+      ),
+      mergeEntityContextState
+    );
+
+    // Update todo
+    connect(
+      'todos',
+      this.actions.updateTodo$.pipe(
+        exhaustMap((todoUpdate) =>
+          this.todoService.updateTodo(todoUpdate).pipe(
+            withLoadingEmission(),
+            map((todo) => withContextResponse(todo, todo.id)),
+            catchError((error) => of(withContextError(error, todoUpdate.id)))
+          )
+        )
+      ),
+      mergeEntityContextState
+    );
+  });
+
+  // Public API
+  readonly fetchTodos = this.actions.fetchTodos;
+  readonly fetchTodo = this.actions.fetchTodo;
+  readonly updateTodo = this.actions.updateTodo;
+  readonly todos$ = this.state.select('todos');
+}
+
+
+
+# ./app.component.ts
+
+import { Component } from '@angular/core';
+import { RouterOutlet } from '@angular/router';
+
+@Component({
+  selector: 'app-root',
+  imports: [RouterOutlet],
+  templateUrl: './app.component.html',
+  styleUrl: './app.component.css'
+})
+export class AppComponent {
+  title = 'sandbox';
+}
+
+
+
+# ./app.config.ts
+
+import { provideHttpClient } from '@angular/common/http';
+import { ApplicationConfig, provideZoneChangeDetection } from '@angular/core';
+import { provideRouter } from '@angular/router';
+import { routes } from './app.routes';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideZoneChangeDetection({ eventCoalescing: true }),
+    provideRouter(routes),
+    provideHttpClient(),
+  ],
+};
+
+
+
+# ./app.component.css
+
+
+
+
+# ./services/todos.service.ts
+
+import { HttpClient } from '@angular/common/http';
+import { inject, Injectable } from '@angular/core';
+import { Todo } from '../state/todos.state';
+
+@Injectable({
+  providedIn: 'root',
+})
+export class TodosService {
+  private readonly http: HttpClient = inject(HttpClient);
+
+  getTodos() {
+    return this.http.get<any[]>('https://jsonplaceholder.typicode.com/todos');
+  }
+
+  getTodo(id: string) {
+    return this.http.get<any>('https://jsonplaceholder.typicode.com/todo/123');
+  }
+
+  updateTodo(todo: Partial<Todo>) {
+    return this.http.post(
+      'https://jsonplaceholder.typicode.com/todo/123',
+      todo
+    );
+  }
+}
+
+
+
