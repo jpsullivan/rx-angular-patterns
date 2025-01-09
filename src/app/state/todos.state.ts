@@ -90,6 +90,43 @@ export class GlobalTodosState {
     );
   });
 
+  // State selectors
+  /**
+   * Selects a todo by ID, either from a static ID or observable ID stream
+   * @param id - Static todo ID
+   */
+  selectTodo(id: string): Observable<Todo | undefined>;
+  selectTodo(id$: Observable<string>): Observable<Todo | undefined>;
+  selectTodo(idOrId$: string | Observable<string>): Observable<Todo | undefined> {
+    return isObservable(idOrId$) 
+      ? idOrId$.pipe(switchMap(id => this.state.select('todos', selectEntity<Todo>(id))))
+      : this.state.select('todos', selectEntity<Todo>(idOrId$));
+  }
+
+  /**
+   * Selects a todo with context by ID, either from a static ID or observable ID stream
+   * @param id - Static todo ID
+   */
+  selectTodoWithContext(id: string): Observable<{
+    value: Todo | undefined;
+    loading: boolean;
+    error: unknown;
+  }>;
+  selectTodoWithContext(id$: Observable<string>): Observable<{
+    value: Todo | undefined;
+    loading: boolean;
+    error: unknown;
+  }>;
+  selectTodoWithContext(idOrId$: string | Observable<string>): Observable<{
+    value: Todo | undefined;
+    loading: boolean;
+    error: unknown;
+  }> {
+    return isObservable(idOrId$)
+      ? idOrId$.pipe(switchMap(id => this.state.select('todos', selectEntityWithContext<Todo>(id))))
+      : this.state.select('todos', selectEntityWithContext<Todo>(idOrId$));
+  }
+
   // Public API
   readonly fetchTodos = this.actions.fetchTodos;
   readonly fetchTodo = this.actions.fetchTodo;

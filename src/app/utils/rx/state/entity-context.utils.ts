@@ -1,4 +1,4 @@
-import { patch } from '@rx-angular/cdk/transformations';
+import { patch, toDictionary } from '@rx-angular/cdk/transformations';
 import { EntityContextCollection, WithContext } from './types';
 
 /**
@@ -11,6 +11,56 @@ export const createInitialContext = <T>(): WithContext<T> => ({
   value: {} as T,
   loading: false,
 });
+
+/**
+ * Converts a dictionary of entities that do not contain any "context" fields, and transforms that input
+ * into a new dictionary where each value is wrapped in the standard `WithContext` fields for future use.
+ */
+const entityDictionaryToContextCollection = <T>(
+  input: Record<string, any>
+): Record<string, WithContext<T>> => {
+  return Object.fromEntries(
+    Object.entries(input_.map([key, value]) => [
+      key,
+      {
+        ...createInitialContext(),
+        value: value,
+      }
+    ])
+  )
+};
+
+const createWithContext = <T>(value: T) => {
+  if (Array.isArray(value)) {
+    return {
+      value: entityDictionaryToContextCollection(toDictionary(value, 'id' as any)),
+      loading: false,
+      error: undefined,
+    }
+  }
+
+  return {
+    value: value,
+    loading: false,
+    error: undefined,
+  }
+}
+
+const createEntityContextCollection = <T>(id: string, value: T) => {
+  if (Array.isArray(value)) {
+    return {
+      value: entityDictionaryToContextCollection(toDictionary(value, 'id' as any)),
+      loading: false,
+      error: undefined,
+    }
+  }
+
+  return {
+    value: { [id]: { value, loading: false, error: undefined }},
+    loading: false,
+    error: undefined,
+  }
+}
 
 /**
  * Creates a properly structured response object with context information.
@@ -26,11 +76,8 @@ export const createInitialContext = <T>(): WithContext<T> => ({
  * // Collection
  * withContextResponse(todos)
  */
-export const withContextResponse = <T>(value: T, id?: string) => ({
-  value: id ? { [id]: { value, loading: false, error: null } } : value,
-  loading: false,
-  error: null,
-});
+export const withContextResponse = <T>(value: T, id?: string) => 
+  id ? createEntityContextCollection(id, value) : createWithContext(value)
 
 /**
  * Creates a properly structured error state with context information.
@@ -73,6 +120,33 @@ export const withContextError = (error: any, id?: string) => ({
  * );
  */
 export function mergeEntityContext<T>(
+  oldState: WithContext<T>,
+  newPartial: Partial<WithContext<any>>
+): WithContext<T> {
+  const resultState = patch(oldState || createInitialContext(), newPartial);
+  resultState.value = patch(oldState?.value || {}, resultState?.value || {});
+  return resultState;
+}
+
+/**
+ * Helper to merge changes into an EntityContextCollection while preserving its structure.
+ * Handles both the top-level context state and the nested entity dictionary.
+ *
+ * @param oldState - The existing entity collection state
+ * @param newPartial - The new partial state to merge
+ * @returns The merged entity collection maintaining full context structure
+ *
+ * @example
+ * connect(
+ *   'todos',
+ *   todoActions$.pipe(...),
+ *   (state, newPartial) => ({
+ *     ...state,
+ *     todos: mergeEntityContext(state.todos, newPartial)
+ *   })
+ * );
+ */
+export function mergeEntityCollectionContext<T>(
   oldState: EntityContextCollection<T>,
   newPartial: Partial<WithContext<any>>
 ): EntityContextCollection<T> {
@@ -95,14 +169,26 @@ export function mergeEntityContext<T>(
  *   (state, newPartial) => mergeEntityContextState(state, newPartial, 'todos')
  * );
  */
-export function mergeEntityContextState<
-  T extends { [K in keyof T]: EntityContextCollection<any> },
-  K extends keyof T
->(state: T, newPartial: Partial<WithContext<any>>, key: K): T {
-  return {
-    ...state,
-    value: mergeEntityContext(state[key], newPartial).value,
-    loading: newPartial.loading,
-    error: newPartial.error,
-  };
+function mergeEntityContextState<
+  T extends { [P in K]: EntityContextCollection<any> },
+  K extends keyof T & string
+>(
+  state: T,
+  newPartial: Partial<WithContext<any>>, 
+  key: K
+): EntityContextCollection<any> {
+  // Handle standalone loading/error updates
+  if (Object.keys(newPartial).length === 1 && ('loading' in newPartial || 'error' in newPartial)) {
+    return {
+      ...state[key],
+      ...newPartial,
+      value: state[key]?.value || {} 
+    };
+  }
+
+  // Handle full entity updates
+  return mergeEntityContext(
+    state[key],
+    newPartial
+  );
 }

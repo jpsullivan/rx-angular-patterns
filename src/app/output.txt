@@ -201,16 +201,24 @@ export function mergeEntityContext<T>(
  * );
  */
 export function mergeEntityContextState<
-  T extends { [K in keyof T]: EntityContextCollection<any> },
-  K extends keyof T
->(state: T, newPartial: Partial<WithContext<any>>, key: K): T {
-  return {
-    ...state,
-    value: mergeEntityContext(state[key], newPartial).value,
-    loading: newPartial.loading,
-    error: newPartial.error,
-  };
+  T extends { [P in K]: EntityContextCollection<any> },
+  K extends keyof T & string
+>(
+  state: T,
+  newPartial: Partial<WithContext<any>>, 
+  key: K
+): EntityContextCollection<any> {
+  // Type guard to ensure we only operate on EntityContextCollection properties
+  if (!state[key] || typeof state[key] !== 'object') {
+    throw new Error(`Property ${key} must be an EntityContextCollection`);
+  }
+
+  return mergeEntityContext(
+    state[key],
+    newPartial
+  );
 }
+
 
 
 
