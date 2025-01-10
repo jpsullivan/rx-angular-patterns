@@ -91,6 +91,37 @@ export const setCollectionError = <T>(
   loading: false,
 });
 
+/**
+ * Creates an operator that handles errors by setting error state and stopping the stream.
+ * Works with both EntityContextCollection and WithContext types.
+ * 
+ * @template T - The type of state being updated 
+ * @param state - The RxState instance
+ * @param setErrorState - Function to update state with error
+ * @returns An operator that handles errors
+ * 
+ * @example
+ * // With EntityContextCollection
+ * this.todosService.getTodos().pipe(
+ *   withTrackedEntityCollection(),
+ *   handleError(this.state, (state) => ({
+ *     todos: setEntityError(state.todos, todoId)
+ *   }))
+ * )
+ */
+export function handleError<T extends object>(
+  state: RxState<T>,
+  setErrorState: (state: T) => Partial<T>
+) {
+  return (source$: Observable<any>) =>
+    source$.pipe(
+      catchError(() => {
+        state.set(setErrorState);
+        return EMPTY;
+      })
+    );
+}
+
 // Helper to update collection with new entities
 export const updateCollection = <T>(
   entities: T[],
@@ -123,3 +154,16 @@ export function withTrackedEntityCollection<T>(
       withLoadingEmission()
     );
 }
+
+/**
+ * Merges a loading emission with existing collection state
+ * while preserving entity data
+ */
+export const mergeCollectionState = <T>(
+  currentState: EntityContextCollection<T>,
+  update: Partial<EntityContextCollection<T>>
+): EntityContextCollection<T> => ({
+  ...currentState,
+  ...update,
+  value: update.value || currentState.value
+});
