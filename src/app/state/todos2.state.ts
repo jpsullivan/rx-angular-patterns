@@ -1,26 +1,14 @@
 import { inject, Injectable } from '@angular/core';
 import { rxState } from '@rx-angular/state';
 import { rxActions } from '@rx-angular/state/actions';
-import { EMPTY } from 'rxjs';
-import { catchError, map, switchMap } from 'rxjs/operators';
-import { Todo } from '../models/todo';
-import { TodosService } from '../services/todos.service';
-import {
-  createInitialEntityState,
-  removeEntity,
-  setEntityError,
-  updateEntity,
-  withTrackedEntityCollection,
-} from '../utils/rx/state/entity-context.utils';
-import { EntityContextCollection } from '../utils/rx/state/types';
-import { withLoadingEmission } from '../utils/rx/state/with-loading-emission';
 
 interface TodosState {
   todos: EntityContextCollection<Todo>;
+  recentTodos: WithContext<Todo>;
 }
 
 @Injectable({
-  providedIn: 'root',
+  providedIn: 'root'
 })
 export class TodosStateService {
   private readonly todosService = inject(TodosService);
@@ -28,6 +16,7 @@ export class TodosStateService {
   private readonly actions = rxActions<{
     loadAll: void;
     loadOne: number;
+    loadRecent: void;
     toggle: number;
     remove: number;
   }>();
@@ -36,6 +25,7 @@ export class TodosStateService {
     // Set initial state
     set({
       todos: createInitialEntityState<Todo>(),
+      recentTodos: createInitialContextState<Todo>()
     });
 
     // Connect load all action
@@ -44,42 +34,15 @@ export class TodosStateService {
         switchMap(() =>
           this.todosService.getTodos().pipe(
             withTrackedEntityCollection(),
-            catchError(() => {
-              set((state) => ({
-                todos: {
-                  ...state.todos,
-                  error: true,
-                  loading: false,
-                },
-              }));
-              return EMPTY;
-            })
+            handleError(set, state => ({
+              todos: setCollectionError(state.todos)
+            }))
           )
         )
       ),
-      (_, todos) => ({ todos })
-    );
-
-    connect(
-      'todos',
-      this.actions.loadAll$.pipe(
-        switchMap(() =>
-          this.todosService.getTodos().pipe(
-            withTrackedEntityCollection(),
-            catchError(() => {
-              set((state) => ({
-                todos: {
-                  ...state.todos,
-                  error: true,
-                  loading: false,
-                },
-              }));
-              return EMPTY;
-            })
-          )
-        )
-      ),
-      (_, todos) => todos
+      (state, todos) => ({
+        todos: mergeCollectionState(state.todos, todos)
+      })
     );
 
     // Connect load single todo
@@ -89,44 +52,39 @@ export class TodosStateService {
           this.todosService.getTodoById(todoId).pipe(
             withLoadingEmission(),
             map((todo) => ({ todo, todoId })),
-            catchError(() => {
-              set((state) => ({
-                todos: setEntityError(state.todos, todoId),
-              }));
-              return EMPTY;
-            })
+            handleError(set, state => ({
+              todos: setEntityError(state.todos, todoId)
+            }))
           )
         )
       ),
       (state, { todo, todoId }) => ({
-        todos: updateEntity(state.todos, todoId, todo),
+        todos: updateEntity(state.todos, todoId, todo)
       })
     );
 
+    // Connect recent todo
     connect(
-      'todos',
-      this.actions.loadOne$.pipe(
-        switchMap((todoId) =>
-          this.todosService.getTodoById(todoId).pipe(
+      this.actions.loadRecent$.pipe(
+        switchMap(() => 
+          this.todosService.getRecentTodo().pipe(
             withLoadingEmission(),
-            map((todo) => ({ todo, todoId })),
-            catchError(() => {
-              set((state) => ({
-                todos: setEntityError(state.todos, todoId),
-              }));
-              return EMPTY;
-            })
+            handleError(set, state => ({
+              recentTodos: setContextError(state.recentTodos)
+            }))
           )
         )
       ),
-      (state, { todo, todoId }) => updateEntity(state.todos, todoId, todo)
+      (state, update) => ({
+        recentTodos: mergeContextState(state.recentTodos, update)
+      })
     );
 
     // Connect toggle action
     connect(this.actions.toggle$, (state, todoId) => ({
       todos: updateEntity(state.todos, todoId, {
-        completed: !state.todos.value[todoId].value.completed,
-      }),
+        completed: !state.todos.value[todoId].value.completed
+      })
     }));
 
     // Connect remove action
@@ -136,45 +94,47 @@ export class TodosStateService {
           this.todosService.deleteTodo(todoId).pipe(
             withLoadingEmission(),
             map(() => todoId),
-            catchError(() => {
-              set((state) => ({
-                todos: setEntityError(state.todos, todoId),
-              }));
-              return EMPTY;
-            })
+            handleError(set, state => ({
+              todos: setEntityError(state.todos, todoId)
+            }))
           )
         )
       ),
       (state, todoId) => ({
-        todos: removeEntity(state.todos, todoId),
+        todos: removeEntity(state.todos, todoId)
       })
     );
   });
 
   // Public selectors as signals
-  readonly todos = this.state.signal('todos');
+  readonly todos = this.state.signal('todos'); 
+  readonly recentTodos = this.state.signal('recentTodos');
 
   // Computed signals
-  readonly isLoading = this.state.computed((state) => state.todos().loading);
-
-  readonly hasError = this.state.computed((state) => state.todos().error);
-
-  readonly todosList = this.state.computed((state) =>
-    Object.values(state.todos().value).map((ctx) => ctx.value)
+  readonly isLoading = this.state.computed(state => 
+    state.todos().loading || state.recentTodos().loading
   );
 
-  readonly completedCount = this.state.computed(
-    (state) =>
-      Object.values(state.todos().value).filter((ctx) => ctx.value.completed)
-        .length
+  readonly hasError = this.state.computed(state =>
+    state.todos().error || state.recentTodos().error
+  );
+
+  readonly todosList = this.state.computed(state =>
+    Object.values(state.todos().value).map(ctx => ctx.value)
+  );
+
+  readonly completedCount = this.state.computed(state =>
+    Object.values(state.todos().value).filter(ctx => ctx.value.completed).length
   );
 
   // Observable selectors
   readonly todos$ = this.state.select('todos');
+  readonly recentTodos$ = this.state.select('recentTodos');
 
   // Public actions
   readonly loadAll = this.actions.loadAll;
   readonly loadOne = this.actions.loadOne;
+  readonly loadRecent = this.actions.loadRecent;
   readonly toggle = this.actions.toggle;
   readonly remove = this.actions.remove;
 }
