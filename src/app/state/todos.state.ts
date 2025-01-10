@@ -1,22 +1,33 @@
 import { inject, Injectable } from '@angular/core';
 import { rxState } from '@rx-angular/state';
 import { rxActions } from '@rx-angular/state/actions';
-import { catchError, exhaustMap, map, of } from 'rxjs';
+import {
+  catchError,
+  exhaustMap,
+  isObservable,
+  map,
+  Observable,
+  of,
+  switchMap,
+} from 'rxjs';
 import { TodosService } from '../services/todos.service';
 import {
-  mergeEntityContext,
   mergeEntityContextState,
   withContextError,
   withContextResponse,
 } from '../utils/rx/state/entity-context.utils';
+import {
+  selectEntity,
+  selectEntityWithContext,
+} from '../utils/rx/state/entity-selectors';
 import { EntityContextCollection } from '../utils/rx/state/types';
 import { withLoadingEmission } from '../utils/rx/state/with-loading-emission';
 
 export type Todo = {
-  id: string;
-  name: string;
-  done: boolean;
-  createdAt: string;
+  userId: number;
+  id?: number;
+  title: string;
+  completed: boolean;
 };
 
 export interface TodosStateModel {
@@ -48,15 +59,7 @@ export class GlobalTodosState {
           )
         )
       ),
-      // (state, newPartial) => mergeEntityContextState(state, newPartial, 'todos')
-      (state, newPartial) => {
-        return {
-          ...state,
-          value: mergeEntityContext(state.todos, newPartial).value,
-          loading: newPartial.loading,
-          error: newPartial.error,
-        };
-      }
+      (state, newPartial) => mergeEntityContextState(state, newPartial, 'todos')
     );
 
     // Fetch single todo
@@ -64,7 +67,7 @@ export class GlobalTodosState {
       'todos',
       this.actions.fetchTodo$.pipe(
         exhaustMap((todoId) =>
-          this.todoService.getTodo(todoId).pipe(
+          this.todoService.getTodoById(todoId).pipe(
             withLoadingEmission(),
             map((todo) => withContextResponse(todo, todoId)),
             catchError((error) => of(withContextError(error, todoId)))
@@ -97,10 +100,16 @@ export class GlobalTodosState {
    */
   selectTodo(id: string): Observable<Todo | undefined>;
   selectTodo(id$: Observable<string>): Observable<Todo | undefined>;
-  selectTodo(idOrId$: string | Observable<string>): Observable<Todo | undefined> {
-    return isObservable(idOrId$) 
-      ? idOrId$.pipe(switchMap(id => this.state.select('todos', selectEntity<Todo>(id))))
-      : this.state.select('todos', selectEntity<Todo>(idOrId$));
+  selectTodo(
+    idOrId$: string | Observable<string>
+  ): Observable<Todo | undefined> {
+    return isObservable(idOrId$)
+      ? idOrId$.pipe(
+          switchMap((id) =>
+            this.state.select('todos').pipe(selectEntity<Todo>(id))
+          )
+        )
+      : this.state.select('todos').pipe(selectEntity<Todo>(idOrId$));
   }
 
   /**
@@ -123,8 +132,12 @@ export class GlobalTodosState {
     error: unknown;
   }> {
     return isObservable(idOrId$)
-      ? idOrId$.pipe(switchMap(id => this.state.select('todos', selectEntityWithContext<Todo>(id))))
-      : this.state.select('todos', selectEntityWithContext<Todo>(idOrId$));
+      ? idOrId$.pipe(
+          switchMap((id) =>
+            this.state.select('todos').pipe(selectEntityWithContext<Todo>(id))
+          )
+        )
+      : this.state.select('todos').pipe(selectEntityWithContext<Todo>(idOrId$));
   }
 
   // Public API
