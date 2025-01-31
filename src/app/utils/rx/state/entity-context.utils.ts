@@ -314,33 +314,33 @@ export const mergeCollectionState = <T>(
   state: EntityContextCollection<T>,
   update: Partial<EntityContextCollection<T>>
 ): EntityContextCollection<T> => {
-     // Handle metadata updates (loading, error, complete) 
-    const baseState = {
-      ...state,
-      ...update
-    };
-
-    // If no value update, return base state
-    if (!update.value) {
-      return baseState;
-    }
-
-    // Handle value updates by merging each updated entity's value with existing entity's value
-    return {
-      ...baseState,
-      value: {
-        ...state.value,
-        ...Object.keys(update.value).reduce((acc, key) => ({
-          ...acc,
-          [key]: {
-            ...state.value?.[key],
-            ...update.value![key],
-            value: {
-              ...(state.value?.[key]?.value || {}),
-              ...(update.value![key]?.value || {})
-            }
-          }
-        }), {})
-      }
-    };
+  // Handle metadata updates (loading, error, complete) 
+  const baseState = {
+    ...state,
+    ...update
   };
+
+  // If no value update, return base state
+  if (!update.value) {
+    return baseState;
+  }
+
+  // Handle value updates by merging each updated entity's value with existing entity's value
+  return {
+    ...baseState,
+    value: {
+      ...state.value,
+      ...Object.keys(update.value).reduce((acc, key) => ({
+        ...acc,
+        [key]: {
+          ...state.value?.[key],
+          ...update.value![key],
+          value: {
+            ...(state.value?.[key]?.value || {}),
+            ...(update.value![key]?.value || {})
+          }
+        }
+      }), {})
+    }
+  };
+};
